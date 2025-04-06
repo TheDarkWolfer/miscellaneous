@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# scan: a wrapper script that prompts before scanning non-private ranges. That way your heart 
+# doesn't miss a beat when you realize you scanned the wrong machine
+
+is_private_ip() {
+  local ip="$1"
+
+  # Very naive check for the private IPv4 blocks:
+  if [[ "$ip" =~ ^10\. ]] ||
+     [[ "$ip" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] ||
+     [[ "$ip" =~ ^192\.168\. ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+prompt_if_not_private() {
+  local ip="$1"
+  if is_private_ip "$ip"; then
+    return 0  # it's private, no prompt needed
+  else
+    echo "Warning: '$ip' is not in a private (RFC1918) range."
+    read -rp "Are you sure you want to scan this address? [y/N] " answer
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+      return 0
+    else
+      echo "Aborting scan of $ip."
+      return 1
+    fi
+  fi
+}
+
+TARGETS=()
+
+# Pass arguments onto nmap
+for arg in "$@"; do
+  # This is a simplistic check if argument looks like an IP or range:
+  if [[ "$arg" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(/[0-9]+)?$ ]]; then
+    TARGETS+=("$arg")
+  fi
+done
+
+# If no IP-like arguments found, we just run nmap as-is, since we avoided the ohnosecond:
+if [[ "${#TARGETS[@]}" -eq 0 ]]; then
+  exec /usr/bin/nmap "$@"
+fi
+
+# Prompt for each distinct target
+for ip in "${TARGETS[@]}"; do
+  prompt_if_not_private "$ip" || exit 1
+done
+
+# If we reach here, user approved scanning all targets
+exec /usr/bin/nmap "$@"
